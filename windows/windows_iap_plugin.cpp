@@ -78,72 +78,69 @@ namespace windows_iap {
 		return message;
 	}
 
-	foundation::IAsyncAction makePurchase(hstring storeId, std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> resultCallback)
-	{
-		StorePurchaseResult result = co_await getStore().RequestPurchaseAsync(storeId);
+    foundation::IAsyncAction makePurchase(hstring storeId, std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> resultCallback)
+    {
+        // FIX 1: Define 'store' here so it can be used throughout the function
+        auto store = getStore();
+        StorePurchaseResult result = co_await store.RequestPurchaseAsync(storeId);
 
-		if (result.ExtendedError().value != S_OK) {
-			resultCallback->Error(std::to_string(result.ExtendedError().value), getExtendedErrorString(result.ExtendedError().value));
-			co_return;
-		}
-		int32_t returnCode;
-		switch (result.Status()) {
-		case StorePurchaseStatus::AlreadyPurchased:
-            // Recovery path: consume remaining balance
-            auto balanceResult =
-            co_await store.GetConsumableBalanceRemainingAsync(storeId);
+        if (result.ExtendedError().value != S_OK) {
+            resultCallback->Error(std::to_string(result.ExtendedError().value), getExtendedErrorString(result.ExtendedError().value));
+            co_return;
+        }
+        int32_t returnCode;
+        switch (result.Status()) {
+            case StorePurchaseStatus::AlreadyPurchased:
+                returnCode = 1;
+                break;
 
-                if (balanceResult.Status() == StoreConsumableStatus::Succeeded &&
-                    balanceResult.BalanceRemaining() > 0)
-                {
-                    // Consume everything that is left
-                    auto fulfillResult =
-                    co_await store.ReportConsumableFulfillmentAsync(
-                            storeId,
-                            balanceResult.TransactionId(),
-                            balanceResult.BalanceRemaining());
-
-                    if (fulfillResult.Status() != StoreConsumableStatus::Succeeded)
-                    {
-                        resultCallback->Error(
-                                "FULFILL_FAILED",
-                                "Failed to recover consumable");
-                        co_return;
-                    }
+            case StorePurchaseStatus::Succeeded:
+            {
+                // KORREKTUR: Eine echte GUID erstellen statt eines Strings.
+                // Windows benötigt für die trackingId zwingend eine GUID.
+                GUID rawGuid;
+                if (FAILED(CoCreateGuid(&rawGuid))) {
+                    resultCallback->Error("GUID_ERROR", "Failed to create tracking GUID");
+                    co_return;
                 }
-			returnCode = 1;
-			break;
+                winrt::guid trackingId(rawGuid);
 
-		case StorePurchaseStatus::Succeeded:
-            co_await getStore().ReportConsumableFulfillmentAsync(
-                storeId,
-                result.TransactionId(),
-                1
-            );
-			returnCode = 0;
-			break;
+                // Jetzt die GUID (trackingId) übergeben, nicht den String
+                auto fulfillResult = co_await store.ReportConsumableFulfillmentAsync(
+                        storeId,
+                        1,              // quantity
+                        trackingId      // trackingId (Jetzt korrekt als GUID)
+                );
 
-		case StorePurchaseStatus::NotPurchased:
-			returnCode = 2;
-			break;
+                if (fulfillResult.Status() != StoreConsumableStatus::Succeeded) {
+                    resultCallback->Error("FULFILL_FAILED", "Consumable fulfillment failed");
+                    co_return;
+                }
+                returnCode = 0;
+            }
+                break;   // FIX 2: Added closing brace to end the scope
 
-		case StorePurchaseStatus::NetworkError:
-			returnCode = 3;
-			break;
+            case StorePurchaseStatus::NotPurchased:
+                returnCode = 2;
+                break;
 
-		case StorePurchaseStatus::ServerError:
-			returnCode = 4;
-			break;
+            case StorePurchaseStatus::NetworkError:
+                returnCode = 3;
+                break;
 
-		default:
-			auto status = reinterpret_cast<int32_t*>(result.Status());
-			resultCallback->Error(std::to_string(*status), "Product was not purchased due to an unknown error.");
-			co_return;
-			break;
-		}
+            case StorePurchaseStatus::ServerError:
+                returnCode = 4;
+                break;
 
-		resultCallback->Success(flutter::EncodableValue(returnCode));
-	}
+            default:
+                auto status = reinterpret_cast<int32_t*>(result.Status());
+                resultCallback->Error(std::to_string(*status), "Product was not purchased due to an unknown error.");
+                co_return;
+                break;
+        }
+
+        resultCallback->Success(flutter::EncodableValue(returnCode));
+    }
 
 	std::string productsToString(std::vector<StoreProduct> products) {
 		std::stringstream ss;
