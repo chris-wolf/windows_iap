@@ -93,6 +93,11 @@ namespace windows_iap {
 			break;
 
 		case StorePurchaseStatus::Succeeded:
+            co_await getStore().ReportConsumableFulfillmentAsync(
+                storeId,
+                result.TransactionId(),
+                1
+            );
 			returnCode = 0;
 			break;
 
