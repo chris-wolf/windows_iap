@@ -89,6 +89,28 @@ namespace windows_iap {
 		int32_t returnCode;
 		switch (result.Status()) {
 		case StorePurchaseStatus::AlreadyPurchased:
+            // Recovery path: consume remaining balance
+            auto balanceResult =
+            co_await store.GetConsumableBalanceRemainingAsync(storeId);
+
+                if (balanceResult.Status() == StoreConsumableStatus::Succeeded &&
+                    balanceResult.BalanceRemaining() > 0)
+                {
+                    // Consume everything that is left
+                    auto fulfillResult =
+                    co_await store.ReportConsumableFulfillmentAsync(
+                            storeId,
+                            balanceResult.TransactionId(),
+                            balanceResult.BalanceRemaining());
+
+                    if (fulfillResult.Status() != StoreConsumableStatus::Succeeded)
+                    {
+                        resultCallback->Error(
+                                "FULFILL_FAILED",
+                                "Failed to recover consumable");
+                        co_return;
+                    }
+                }
 			returnCode = 1;
 			break;
 
